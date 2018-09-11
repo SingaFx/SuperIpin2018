@@ -1,4 +1,9 @@
 '''
+
+11/09/2018 Rev 14 - add reverse signal feature
+                - temporary comment out layer feature
+
+
 30/03/2018 Reb 10.5d - add count arbitrage delay
 27/03/2018 Reb 10.5c - debug false signal
 26/02/2018 Rev 10.5b - add more data for telegram notify
@@ -55,9 +60,9 @@ import ReadConfig3a
 import validateTime as vt
 import write2db as db
 
-app_name = 'SuperIpin 13b'
-ea_name_ver = 'SuperIpin 13b'
-zmq_ver_cfg = 'mt4zeromq_1.0'
+app_name = 'SuperIpin 14'
+ea_name_ver = 'SuperIpin 14'
+zmq_ver_cfg = 'mt4zeromq_2.0'
 cfgData = ReadConfig3a.config('superipin.cfg')
 # print 'cfgData result =',cfgData.readStatus
 
@@ -213,6 +218,10 @@ class FormWidget(QWidget):
         self.chk2_saveData = QCheckBox("Save Data")
         self.chk2_saveData.setStatusTip('Save data to database')
         self.chk2_saveData.setFont(QFont("Courier New", 12))
+        
+        self.chk4_reverseSignal = QCheckBox("Reverse Signal")
+        self.chk4_reverseSignal.setStatusTip('Reverse the signal')
+        self.chk4_reverseSignal.setFont(QFont("Courier New", 12))
 
         self.chk3_telegram = QCheckBox("Telegram")
         self.chk3_telegram.setStatusTip('Send notification to Telegram')
@@ -248,6 +257,7 @@ class FormWidget(QWidget):
         v3Sub_box = QVBoxLayout()
         v3Sub_box.addWidget(self.chk3_telegram)
         v3Sub_box.addWidget(self.chk2_saveData)
+        v3Sub_box.addWidget(self.chk4_reverseSignal)
         v3Sub_box.addWidget(self.chk1_hedging)
         v3Sub_box.addWidget(self.lbl_verCheck)
         v3Sub_box.addWidget(self.lbl_errMsg)
@@ -503,55 +513,85 @@ class FormWidget(QWidget):
     
                         #temporary disable comment to be untraceable
                         mt4_comments = ' '
+                        #generate timestamp and remove milisecond
+                        timestamp = str(datetime.now().replace(microsecond=0))
     
                         # part 1 : if cnt arbitrage greather than cnt_arb_limit                       
                         if slave.cnt_arb[i] >= cnt_arb_limit:
     
-                            #send BUY order
-                            slave.send_order(BUY, slave.symbols[i], slave.ask[i], slave.lots, slave.SLIP, slave.stop_loss, mt4_comments)
-                            print (slave.company, slave.acctName[:10], ': Open order buy for', slave.symbols[i])
+                            if self.chk4_reverseSignal.isChecked():
+                                #send SELL order
+                                slave.send_order(SELL, slave.symbols[i], slave.bid[i], slave.lots, slave.SLIP, slave.stop_loss, mt4_comments)
+                                print (slave.company, slave.acctName[:10], ': Open order sell for', slave.symbols[i])
+                                
+                                #generate text message for telegram
+                                text_msg = timestamp + '\n' + slave.company + '\n' + slave.acctName[:10] +'\n' \
+                                + slave.symbols[i] + ': Open position SELL' + '\n' + 'Pos =' +  str(slave.pos[i]) \
+                                + '\n' + 'Gap =' + str(slave.gap[i])
+                                
+                                #save trade data to log file.
+                                data = [slave.tms, slave.company, slave.acctName[:10], slave.symbols[i], slave.trade_count[i], master_broker.bid[i] \
+                                        , master_broker.ask[i], slave.bid[i], slave.ask[i], 'SELL', 'level1', slave.pos[i] \
+                                        , slave.cnt_arb[i]]
+                                
+                            else:
+                                #send BUY order
+                                slave.send_order(BUY, slave.symbols[i], slave.ask[i], slave.lots, slave.SLIP, slave.stop_loss, mt4_comments)
+                                print (slave.company, slave.acctName[:10], ': Open order buy for', slave.symbols[i])
     
-                            #generate timestamp and remove milisecond
-                            timestamp = str(datetime.now().replace(microsecond=0))
-    
-                            #generate text message for telegram
-                            text_msg = timestamp + '\n' + slave.company + '\n' + slave.acctName[:10] +'\n' \
-                            + slave.symbols[i] + ': Open position BUY' + '\n' + 'Pos =' +  str(slave.pos[i]) \
-                            + '\n' + 'Gap =' + str(slave.gap[i])
+                                #generate text message for telegram
+                                text_msg = timestamp + '\n' + slave.company + '\n' + slave.acctName[:10] +'\n' \
+                                + slave.symbols[i] + ': Open position BUY' + '\n' + 'Pos =' +  str(slave.pos[i]) \
+                                + '\n' + 'Gap =' + str(slave.gap[i])
+                                
+                                #save trade data to log file.
+                                data = [slave.tms, slave.company, slave.acctName[:10], slave.symbols[i], slave.trade_count[i], master_broker.bid[i] \
+                                        , master_broker.ask[i], slave.bid[i], slave.ask[i], 'BUY', 'level1', slave.pos[i] \
+                                        , slave.cnt_arb[i]]
     
                             #if telegram check box is selected, then send message to telegram
                             if self.chk3_telegram.isChecked():
-                                bot.send_message(chat_id=chat_id, text=text_msg, timeout=50)
-    
-                            #save trade data to log file.
-                            data = [slave.tms, slave.company, slave.acctName[:10], slave.symbols[i], slave.trade_count[i], master_broker.bid[i] \
-                                    , master_broker.ask[i], slave.bid[i], slave.ask[i], 'BUY', 'level1', slave.pos[i] \
-                                    , slave.cnt_arb[i]]
+                                bot.send_message(chat_id=chat_id, text=text_msg, timeout=50)   
+                            
                             write_2_file(data)
     
                         #part 2 : if cnt arbitrage lesser than -cnt_arb_limit
                         elif slave.cnt_arb[i] <= - cnt_arb_limit:
+                            
+                            if self.chk4_reverseSignal.isChecked():
+                                #send BUY order
+                                slave.send_order(BUY, slave.symbols[i], slave.ask[i], slave.lots, slave.SLIP, slave.stop_loss, mt4_comments)  # IC Market
+                                print (slave.company, slave.acctName[:10], ': Open order sell for', slave.symbols[i])
+                                
+                                # generate text message for telegram
+                                text_msg = timestamp + '\n' + slave.company + '\n' + slave.acctName[:10] + '\n' \
+                                + slave.symbols[i] + ': Open position BUY' + '\n' + 'Neg =' + str(slave.neg[i]) \
+                                + '\n' + 'Gap =' + str(slave.gap[i])
+                                
+                                #save trade data to log file.
+                                data = [slave.tms, slave.company, slave.acctName[:10], slave.symbols[i], slave.trade_count[i], master_broker.bid[i] \
+                                        , master_broker.ask[i], slave.bid[i], slave.ask[i], 'BUY', 'level1', slave.neg[i] \
+                                        , slave.cnt_arb[i]]
+                                
+                            else:
+                                #send SELL order
+                                slave.send_order(SELL, slave.symbols[i], slave.bid[i], slave.lots, slave.SLIP, slave.stop_loss, mt4_comments)  # IC Market
+                                print (slave.company, slave.acctName[:10], ': Open order sell for', slave.symbols[i])
     
-                            #send SELL order
-                            slave.send_order(SELL, slave.symbols[i], slave.bid[i], slave.lots, slave.SLIP, slave.stop_loss, mt4_comments)  # IC Market
-                            print (slave.company, slave.acctName[:10], ': Open order sell for', slave.symbols[i])
-    
-                            # generate timestamp and remove milisecond
-                            timestamp = str(datetime.now().replace(microsecond=0))
-    
-                            # generate text message for telegram
-                            text_msg = timestamp + '\n' + slave.company + '\n' + slave.acctName[:10] + '\n' \
-                            + slave.symbols[i] + ': Open position SELL' + '\n' + 'Neg =' + str(slave.neg[i]) \
-                            + '\n' + 'Gap =' + str(slave.gap[i])
-    
+                                # generate text message for telegram
+                                text_msg = timestamp + '\n' + slave.company + '\n' + slave.acctName[:10] + '\n' \
+                                + slave.symbols[i] + ': Open position SELL' + '\n' + 'Neg =' + str(slave.neg[i]) \
+                                + '\n' + 'Gap =' + str(slave.gap[i])
+                                
+                                #save trade data to log file.
+                                data = [slave.tms, slave.company, slave.acctName[:10], slave.symbols[i], slave.trade_count[i], master_broker.bid[i] \
+                                        , master_broker.ask[i], slave.bid[i], slave.ask[i], 'SELL', 'level1', slave.neg[i] \
+                                        , slave.cnt_arb[i]]
+                                
                             # if telegram check box is selected, then send message to telegram
                             if self.chk3_telegram.isChecked():
                                 bot.send_message(chat_id=chat_id, text=text_msg, timeout=50)
-                                
-                            #save trade data to log file.
-                            data = [slave.tms, slave.company, slave.acctName[:10], slave.symbols[i], slave.trade_count[i], master_broker.bid[i] \
-                                    , master_broker.ask[i], slave.bid[i], slave.ask[i], 'SELL', 'level1', slave.neg[i] \
-                                    , slave.cnt_arb[i]]
+                            
                             write_2_file(data)
     
                     # to close position if price converge again
@@ -593,6 +633,8 @@ class FormWidget(QWidget):
                             write_2_file(data)
     
                         
+                        '''
+                        # temporary comments out for layer 11/09/2018
                         # open layer if price gap further
     
                         elif slave.order_type[i] == BUY and slave.pos[i] >= next_step and slave.cnt_arb[i] >= cnt_arb_limit:
@@ -630,6 +672,7 @@ class FormWidget(QWidget):
                                     , master_broker.ask[i], slave.bid[i], slave.ask[i], 'SELL', 'Next level', slave.neg[i] \
                                     , slave.cnt_arb[i]]
                             write_2_file(data)
+                        '''
     
     
                 else:
